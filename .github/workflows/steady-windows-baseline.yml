@@ -1,0 +1,113 @@
+---
+name: STEADY Windows baseline
+
+on:
+  push:
+    branches: [steady/windows-baseline]
+    paths: [.github/workflows/steady-windows-baseline.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: steady-baseline-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows-x64:
+    runs-on: windows-2022
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Fetch pinned build dependencies without codec source trees
+        shell: pwsh
+        run: |
+          git submodule update --init --depth 1 third-party/build-deps
+          if ($LASTEXITCODE) { throw 'build-deps checkout failed' }
+          git submodule update --init --recursive --depth 1 third-party/Simple-Web-Server third-party/TPCircularBuffer third-party/ViGEmClient third-party/glad third-party/libdisplaydevice third-party/libvirtualhid third-party/lizardbyte-common third-party/moonlight-common-c third-party/nvapi third-party/tray
+          if ($LASTEXITCODE) { throw 'Windows dependency checkout failed' }
+
+      - uses: msys2/setup-msys2@ec48f7c5447b3140e2b088413ae3a55687bccb6e
+        with:
+          location: 'C:\'
+          msystem: UCRT64
+          path-type: inherit
+          update: true
+          install: >-
+            git
+            mingw-w64-ucrt-x86_64-boost
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-cppwinrt
+            mingw-w64-ucrt-x86_64-curl-winssl
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-miniupnpc
+            mingw-w64-ucrt-x86_64-nlohmann-json
+            mingw-w64-ucrt-x86_64-onevpl
+            mingw-w64-ucrt-x86_64-openssl
+            mingw-w64-ucrt-x86_64-opus
+            mingw-w64-ucrt-x86_64-toolchain
+            mingw-w64-ucrt-x86_64-qt6-static
+            mingw-w64-ucrt-x86_64-MinHook
+
+      - name: Verify required Windows shell location
+        shell: pwsh
+        run: |
+          if (-not (Test-Path -LiteralPath 'C:\msys64\msys2_shell.cmd')) { throw 'Expected C:\msys64 shell unavailable' }
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: '24'
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
+        with:
+          python-version: '3.14'
+
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e
+
+      - name: Sync locked repository tools
+        shell: pwsh
+        run: uv sync --locked
+
+      - name: Build unmodified Windows host sources and tests
+        shell: cmd
+        run: |
+          call C:\msys64\msys2_shell.cmd -defterm -here -no-start -ucrt64 -c "cmake -S . -B cmake-build-baseline -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DBUILD_DOCS=OFF -DBUILD_TESTS=ON -DSUNSHINE_ASSETS_DIR=assets -DSUNSHINE_PUBLISHER_NAME=STEADY -DSUNSHINE_PUBLISHER_ISSUE_URL=https://github.com/rodneyo1/Sunshine/issues && cmake --build cmake-build-baseline --parallel 2"
+
+      - name: Run upstream tests
+        shell: cmd
+        run: |
+          call C:\msys64\msys2_shell.cmd -defterm -here -no-start -ucrt64 -c "cd cmake-build-baseline/tests && ./test_sunshine.exe --gtest_color=yes --gtest_output=xml:test_results.xml"
+
+      - name: Record pins and prepare portable baseline
+        if: always()
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory baseline-package -Force | Out-Null
+          git rev-parse HEAD | Set-Content baseline-package/source-pin.txt
+          git submodule status --recursive | Set-Content baseline-package/submodule-pins.txt
+          if (Test-Path cmake-build-baseline/sunshine.exe) {
+            Copy-Item cmake-build-baseline/sunshine.exe baseline-package
+            if (Test-Path cmake-build-baseline/assets) { Copy-Item cmake-build-baseline/assets baseline-package/assets -Recurse }
+            Get-ChildItem cmake-build-baseline -File -Filter '*.dll' | Copy-Item -Destination baseline-package
+            $runtimeFiles = @('C:\msys64\ucrt64\bin\zlib1.dll', 'C:\msys64\ucrt64\bin\minhook-detours.x64.dll')
+            foreach ($runtimeFile in $runtimeFiles) {
+              if (Test-Path -LiteralPath $runtimeFile) { Copy-Item -LiteralPath $runtimeFile -Destination baseline-package }
+            }
+          }
+
+      - name: Preserve baseline evidence and binaries
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: sunshine-windows-x64-baseline
+          retention-days: 14
+          if-no-files-found: warn
+          path: |
+            baseline-package/
+            cmake-build-baseline/CMakeCache.txt
+            cmake-build-baseline/CMakeFiles/CMakeConfigureLog.yaml
+            cmake-build-baseline/tests/test_results.xml
