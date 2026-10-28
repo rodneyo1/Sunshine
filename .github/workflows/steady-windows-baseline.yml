@@ -26,7 +26,8 @@ jobs:
       - name: Fetch pinned build dependencies without codec source trees
         shell: pwsh
         run: |
-          git submodule update --init --depth 1 third-party/build-deps
+          # uv checks local package metadata for all locked groups, including Flatpak tools.
+          git submodule update --init --depth 1 third-party/build-deps packaging/linux/flatpak/deps/flatpak-builder-tools
           if ($LASTEXITCODE) { throw 'build-deps checkout failed' }
           git submodule update --init --recursive --depth 1 third-party/Simple-Web-Server third-party/TPCircularBuffer third-party/ViGEmClient third-party/glad third-party/libdisplaydevice third-party/libvirtualhid third-party/lizardbyte-common third-party/moonlight-common-c third-party/nvapi third-party/tray
           if ($LASTEXITCODE) { throw 'Windows dependency checkout failed' }
