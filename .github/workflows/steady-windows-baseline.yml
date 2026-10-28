@@ -46,6 +46,7 @@ jobs:
             mingw-w64-ucrt-x86_64-cppwinrt
             mingw-w64-ucrt-x86_64-curl-winssl
             mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-libtiff
             mingw-w64-ucrt-x86_64-miniupnpc
             mingw-w64-ucrt-x86_64-nlohmann-json
             mingw-w64-ucrt-x86_64-onevpl
@@ -73,6 +74,11 @@ jobs:
       - name: Sync locked repository tools
         shell: pwsh
         run: uv sync --locked
+
+      - name: Record effective UCRT64 dependency environment
+        shell: cmd
+        run: |
+          call C:\msys64\msys2_shell.cmd -defterm -here -no-start -ucrt64 -c "mkdir -p baseline-package && pacman -Q > baseline-package/msys2-packages.txt && pkg-config --modversion libtiff-4 && gcc --version && cmake --version"
 
       - name: Build unmodified Windows host sources and tests
         shell: cmd
