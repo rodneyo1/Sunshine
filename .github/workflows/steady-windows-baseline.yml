@@ -12,7 +12,8 @@ permissions:
 
 concurrency:
   group: steady-baseline-${{ github.ref }}
-  cancel-in-progress: true
+  # Preserve compiler/test evidence; follow-up baseline fixes wait their turn.
+  cancel-in-progress: false
 
 jobs:
   windows-x64:
@@ -99,21 +100,21 @@ jobs:
         run: |
           call C:\msys64\msys2_shell.cmd -defterm -here -no-start -ucrt64 -c "cd cmake-build-baseline/tests && ./test_sunshine.exe --gtest_color=yes --gtest_output=xml:test_results.xml"
 
-      - name: Record pins and prepare portable baseline
+      - name: Install complete portable baseline using upstream rules
+        shell: cmd
+        run: |
+          call C:\msys64\msys2_shell.cmd -defterm -here -no-start -ucrt64 -c "cmake --install cmake-build-baseline --prefix $PWD/baseline-package"
+
+      - name: Record pins and verify portable baseline
         if: always()
         shell: pwsh
         run: |
           New-Item -ItemType Directory baseline-package -Force | Out-Null
           git rev-parse HEAD | Set-Content baseline-package/source-pin.txt
           git submodule status --recursive | Set-Content baseline-package/submodule-pins.txt
-          if (Test-Path cmake-build-baseline/sunshine.exe) {
-            Copy-Item cmake-build-baseline/sunshine.exe baseline-package
-            if (Test-Path cmake-build-baseline/assets) { Copy-Item cmake-build-baseline/assets baseline-package/assets -Recurse }
-            Get-ChildItem cmake-build-baseline -File -Filter '*.dll' | Copy-Item -Destination baseline-package
-            $runtimeFiles = @('C:\msys64\ucrt64\bin\zlib1.dll', 'C:\msys64\ucrt64\bin\minhook-detours.x64.dll')
-            foreach ($runtimeFile in $runtimeFiles) {
-              if (Test-Path -LiteralPath $runtimeFile) { Copy-Item -LiteralPath $runtimeFile -Destination baseline-package }
-            }
+          Copy-Item LICENSE baseline-package
+          foreach ($requiredFile in @('sunshine.exe', 'zlib1.dll', 'tools/sunshinesvc.exe', 'scripts/add-firewall-rule.bat', 'scripts/install-service.bat', 'assets/web/index.html')) {
+            if (-not (Test-Path -LiteralPath "baseline-package/$requiredFile")) { throw "Incomplete package: $requiredFile" }
           }
 
       - name: Preserve baseline evidence and binaries
