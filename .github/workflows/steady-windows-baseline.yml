@@ -117,6 +117,18 @@ jobs:
             if (-not (Test-Path -LiteralPath "baseline-package/$requiredFile")) { throw "Incomplete package: $requiredFile" }
           }
 
+      - name: Check staged host runtime without build-tool DLL paths
+        shell: pwsh
+        run: |
+          $savedPath = $env:PATH
+          try {
+            $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot"
+            & .\baseline-package\sunshine.exe --version 2>&1 | Tee-Object baseline-package/runtime-version.txt
+            if ($LASTEXITCODE -ne 0) { throw "Staged Sunshine runtime failed: $LASTEXITCODE" }
+          } finally {
+            $env:PATH = $savedPath
+          }
+
       - name: Preserve baseline evidence and binaries
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
