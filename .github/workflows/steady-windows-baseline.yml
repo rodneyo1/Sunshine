@@ -66,6 +66,14 @@ jobs:
         with:
           node-version: '24'
 
+      - name: Resolve native Windows npm for the UCRT64 build
+        shell: pwsh
+        run: |
+          $nativeNpm = (Get-Command npm.cmd -ErrorAction Stop).Source -replace '\\', '/'
+          "STEADY_NPM=$nativeNpm" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          & $nativeNpm --version
+          if ($LASTEXITCODE) { throw 'Native npm is unavailable' }
+
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
         with:
           python-version: '3.14'
@@ -84,7 +92,7 @@ jobs:
       - name: Build unmodified Windows host sources and tests
         shell: cmd
         run: |
-          call C:\msys64\msys2_shell.cmd -defterm -here -no-start -ucrt64 -c "cmake -S . -B cmake-build-baseline -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DBUILD_DOCS=OFF -DBUILD_TESTS=ON -DSUNSHINE_ASSETS_DIR=assets -DSUNSHINE_PUBLISHER_NAME=STEADY -DSUNSHINE_PUBLISHER_ISSUE_URL=https://github.com/rodneyo1/Sunshine/issues && cmake --build cmake-build-baseline --parallel 2"
+          call C:\msys64\msys2_shell.cmd -defterm -here -no-start -ucrt64 -c "cmake -S . -B cmake-build-baseline -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DBUILD_DOCS=OFF -DBUILD_TESTS=ON -DNPM='%STEADY_NPM%' -DSUNSHINE_ASSETS_DIR=assets -DSUNSHINE_PUBLISHER_NAME=STEADY -DSUNSHINE_PUBLISHER_ISSUE_URL=https://github.com/rodneyo1/Sunshine/issues && cmake --build cmake-build-baseline --parallel 2"
 
       - name: Run upstream tests
         shell: cmd
