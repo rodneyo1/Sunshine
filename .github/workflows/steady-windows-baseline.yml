@@ -121,12 +121,19 @@ jobs:
         shell: pwsh
         run: |
           $savedPath = $env:PATH
+          Push-Location baseline-package
           try {
             $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot"
-            & .\baseline-package\sunshine.exe --version 2>&1 | Tee-Object baseline-package/runtime-version.txt
-            if ($LASTEXITCODE -ne 0) { throw "Staged Sunshine runtime failed: $LASTEXITCODE" }
+            $versionOutput = & .\sunshine.exe --version 2>&1
+            $versionExit = $LASTEXITCODE
+            $versionOutput | Tee-Object runtime-version.txt
+            if ($versionExit -ne 0) { throw "Staged Sunshine runtime failed: $versionExit" }
+            if (($versionOutput -join "`n") -notmatch 'Sunshine version:\s+\S+') {
+              throw 'Staged Sunshine did not report its version; zero exit alone is insufficient'
+            }
           } finally {
             $env:PATH = $savedPath
+            Pop-Location
           }
 
       - name: Preserve baseline evidence and binaries
