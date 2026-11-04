@@ -22,6 +22,7 @@ extern "C" {
 #include <boost/bind.hpp>
 
 // local includes
+#include "../steady/SteadyProbe.h"
 #include "config.h"
 #include "globals.h"
 #include "input.h"
@@ -876,6 +877,11 @@ namespace rtsp_stream {
 
     // Tell the client about our supported features
     ss << "a=x-ss-general.featureFlags:" << (uint32_t) platf::get_capabilities() << std::endl;
+#ifdef _WIN32
+    if (steady_probe_opt_in()) {
+      ss << "a=x-steady-input.probeVersion:1" << std::endl;
+    }
+#endif
 
     // Always request new control stream encryption if the client supports it
     uint32_t encryption_flags_supported = SS_ENC_CONTROL_V2 | SS_ENC_AUDIO;

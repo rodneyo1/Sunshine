@@ -90,7 +90,7 @@ jobs:
         run: |
           call C:\msys64\msys2_shell.cmd -defterm -here -no-start -ucrt64 -c "mkdir -p baseline-package && pacman -Q > baseline-package/msys2-packages.txt && pkg-config --modversion libtiff-4 harfbuzz && pkg-config --static --libs harfbuzz && gcc --version && cmake --version"
 
-      - name: Build unmodified Windows host sources and tests
+      - name: Build Windows host and tests with opt-in control calibration
         shell: cmd
         run: |
           call C:\msys64\msys2_shell.cmd -defterm -here -no-start -ucrt64 -c "cmake -S . -B cmake-build-baseline -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DBUILD_DOCS=OFF -DBUILD_TESTS=ON -DNPM='%STEADY_NPM%' -DSUNSHINE_ASSETS_DIR=assets -DSUNSHINE_PUBLISHER_NAME=STEADY -DSUNSHINE_PUBLISHER_ISSUE_URL=https://github.com/rodneyo1/Sunshine/issues && cmake --build cmake-build-baseline --parallel 2"
@@ -113,6 +113,8 @@ jobs:
           git rev-parse HEAD | Set-Content baseline-package/source-pin.txt
           git submodule status --recursive | Set-Content baseline-package/submodule-pins.txt
           Copy-Item LICENSE baseline-package
+          Copy-Item 'steady/Start Probe Host.cmd' baseline-package
+          Get-FileHash steady/SteadyProbe.h | ConvertTo-Json | Set-Content baseline-package/steady-probe-source.json
           foreach ($requiredFile in @('sunshine.exe', 'zlib1.dll', 'tools/sunshinesvc.exe', 'scripts/add-firewall-rule.bat', 'scripts/install-service.bat', 'assets/web/index.html')) {
             if (-not (Test-Path -LiteralPath "baseline-package/$requiredFile")) { throw "Incomplete package: $requiredFile" }
           }

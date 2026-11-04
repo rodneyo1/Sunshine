@@ -24,6 +24,7 @@ extern "C" {
 }
 
 // local includes
+#include "../steady/SteadyProbe.h"
 #include "config.h"
 #include "display_device.h"
 #include "globals.h"
@@ -558,6 +559,7 @@ namespace stream {
 
       net::peer_t peer;  ///< Connected ENet peer for the control channel.
       std::uint32_t seq;  ///< Sequence number for the next encrypted control message.
+      steady_probe_session steady_probe {};  ///< Finite diagnostic probe generation/replay state.
 
       platf::feedback_queue_t feedback_queue;  ///< Queue of controller feedback awaiting control-channel delivery.
       safe::mail_raw_t::event_t<video::hdr_info_t> hdr_queue;  ///< Queue of HDR metadata awaiting control-channel delivery.
@@ -1175,6 +1177,42 @@ namespace stream {
    * @param server RTSP server instance handling the request.
    */
   void controlBroadcastThread(control_server_t *server) {
+#ifdef _WIN32
+    // Diagnostic only: existing paired control-v2 authentication precedes this
+    // handler. No input ownership or keyboard state is touched.
+    server->map(STEADY_PROBE_TYPE, [](session_t *session, const std::string_view &payload) {
+      if (!steady_probe_opt_in() || session->config.controlProtocolType != 13 || !(session->config.encryptionFlagsEnabled & SS_ENC_CONTROL_V2) || !session->control.peer) {
+        return;
+      }
+      std::uint64_t t2, t3, frequency;
+      if (!steady_probe_now(&t2, &frequency) || !steady_probe_now(&t3, &frequency)) {
+        return;
+      }
+      std::array<unsigned char, STEADY_PROBE_BYTES> reply;
+      if (!steady_probe_reply_once(&session->control.steady_probe, reply.data(), reinterpret_cast<const unsigned char *>(payload.data()), payload.size(), true, t2, t3, frequency)) {
+        return;
+      }
+      // Never let a diagnostic consume the final outer nonce or wrap it.
+      if (session->control.seq == UINT32_MAX) {
+        session::stop(*session);
+        return;
+      }
+      std::array<std::uint8_t, sizeof(control_header_v2) + STEADY_PROBE_BYTES> plaintext {};
+      auto header = reinterpret_cast<control_header_v2 *>(plaintext.data());
+      header->type = util::endian::little(static_cast<std::uint16_t>(STEADY_PROBE_TYPE));
+      header->payloadLength = util::endian::little(static_cast<std::uint16_t>(reply.size()));
+      std::copy(reply.begin(), reply.end(), plaintext.begin() + sizeof(control_header_v2));
+      std::array<std::uint8_t, 128> encrypted;
+      auto response = encode_control(session, std::string_view {reinterpret_cast<const char *>(plaintext.data()), plaintext.size()}, encrypted);
+      if (response.empty()) {
+        return;
+      }
+      auto packet = enet_packet_create(response.data(), response.size(), ENET_PACKET_FLAG_UNSEQUENCED);
+      if (packet && enet_peer_send(session->control.peer, CTRL_CHANNEL_KEYBOARD, packet)) {
+        enet_packet_destroy(packet);
+      }
+    });
+#endif
     server->map(packetTypes[IDX_PERIODIC_PING], [](session_t *session, const std::string_view &payload) {
       BOOST_LOG(verbose) << "type [IDX_PERIODIC_PING]"sv;
     });
