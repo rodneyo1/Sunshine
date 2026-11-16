@@ -50,8 +50,16 @@ TEST(SteadyProbeTest, InvalidUnauthenticatedRequestsCannotMutateOutputOrOwnershi
 
 TEST(SteadyProbeTest, VersionRequiresAnExactUniqueSdpAttribute) {
   ASSERT_EQ(steady_probe_sdp_version(nullptr), 0);
-  ASSERT_EQ(steady_probe_sdp_version("v=0\r\na=x-steady-input.probeVersion:1\r\n"), 1);
-  ASSERT_EQ(steady_probe_sdp_version("a=x-steady-input.probeVersion:1junk\n"), 0);
-  ASSERT_EQ(steady_probe_sdp_version("a=x-steady-input.probeVersion:2\n"), 0);
-  ASSERT_EQ(steady_probe_sdp_version("a=x-steady-input.probeVersion:1\na=x-steady-input.probeVersion:1\n"), 0);
+  ASSERT_EQ(steady_probe_sdp_version("v=0\r\na=x-steady-input.probeVersion:2\r\n"), STEADY_PROBE_VERSION);
+  ASSERT_EQ(steady_probe_sdp_version("a=x-steady-input.probeVersion:2junk\n"), 0);
+  ASSERT_EQ(steady_probe_sdp_version("a=x-steady-input.probeVersion:1\n"), 0);
+  ASSERT_EQ(steady_probe_sdp_version("a=x-steady-input.probeVersion:2\na=x-steady-input.probeVersion:2\n"), 0);
+}
+
+TEST(SteadyProbeTest, CollectionRequiresUsableTargetAndDurationWithinHardLimits) {
+  ASSERT_EQ(steady_probe_collection_stop(10000, 9938, STEADY_PROBE_MIN_NS), STEADY_PROBE_RUNNING);
+  ASSERT_EQ(steady_probe_collection_stop(10000, 10000, STEADY_PROBE_MIN_NS - 1), STEADY_PROBE_RUNNING);
+  ASSERT_EQ(steady_probe_collection_stop(10100, 10000, STEADY_PROBE_MIN_NS), STEADY_PROBE_STOP_TARGET);
+  ASSERT_EQ(steady_probe_collection_stop(STEADY_PROBE_SAMPLES, 9999, STEADY_PROBE_MIN_NS), STEADY_PROBE_STOP_CAPACITY);
+  ASSERT_EQ(steady_probe_collection_stop(10000, 9999, STEADY_PROBE_MAX_NS), STEADY_PROBE_STOP_TIMEOUT);
 }

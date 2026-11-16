@@ -879,7 +879,7 @@ namespace rtsp_stream {
     ss << "a=x-ss-general.featureFlags:" << (uint32_t) platf::get_capabilities() << std::endl;
 #ifdef _WIN32
     if (steady_probe_opt_in()) {
-      ss << "a=x-steady-input.probeVersion:1" << std::endl;
+      ss << "a=x-steady-input.probeVersion:" << STEADY_PROBE_VERSION << std::endl;
     }
 #endif
 
