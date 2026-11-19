@@ -100,6 +100,8 @@ namespace input {
   #ifdef _WIN32
     /** @brief Read completed timed backend submissions for a fake-backend integration test. @return Count or zero. */
     std::uint64_t steady_transition_count();
+    /** @brief Read completed timed ingress processing for the fake-backend test. @return Count or zero. */
+    std::uint64_t steady_processed_count();
   #endif
     /**
      * @brief Replace the global platform input backend for a unit test.

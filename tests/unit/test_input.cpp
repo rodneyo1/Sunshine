@@ -19,6 +19,11 @@
 #include <thread>
 #include <vector>
 
+#ifdef _WIN32
+  // lib includes
+  #include <windows.h>
+#endif
+
 // moonlight-common-c includes
 extern "C" {
 #include <moonlight-common-c/src/Input.h>
@@ -30,9 +35,8 @@ extern "C" {
 #include "src/platform/virtualhid_input.h"
 #include "src/utility.h"
 #ifdef _WIN32
+  // local includes
   #include "steady/SteadyInput.h"
-
-  #include <windows.h>
 #endif
 
 namespace {
@@ -715,6 +719,12 @@ TEST_F(InputGamepadSessionTest, SteadyCommitDispatchesOnceAndDisconnectReleasesT
   ASSERT_EQ(input::testing::steady_transition_count(), 1);
   // A repeated authenticated identity is deduplicated, never injected twice.
   ASSERT_TRUE(steady_test_receive(stream_input, frame.data(), reply));
+  const auto duplicate_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+  while (input::testing::steady_processed_count() < 2 && std::chrono::steady_clock::now() < duplicate_deadline) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  ASSERT_EQ(input::testing::steady_processed_count(), 2);
+  EXPECT_EQ(input::testing::steady_transition_count(), 1);
   input::reset(stream_input);
   const auto event = context().keyboard->last_submitted_event();
   EXPECT_EQ(event.key_code, 0x41);

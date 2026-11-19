@@ -5,8 +5,24 @@
 #include <powrprof.h>
 #include <bcrypt.h>
 #include <atomic>
+#include <type_traits>
 
 namespace steady {
+// MinGW omits the powrprof callback typedefs on some supported toolchains.
+// This mirrors the documented SDK ABI without adding global compatibility names.
+/** @brief User32 suspend/resume subscription ABI, retained for process lifetime. */
+struct PowerNotificationParameters {
+    ULONG (CALLBACK *Callback)(PVOID,ULONG,PVOID) = nullptr; ///< Windows callback ABI.
+    PVOID Context = nullptr; ///< Process-lifetime callback context.
+};
+constexpr DWORD power_notification_callback = 2; ///< DEVICE_NOTIFY_CALLBACK value from the Windows SDK.
+#ifdef DEVICE_NOTIFY_CALLBACK
+static_assert(sizeof(PowerNotificationParameters)==sizeof(DEVICE_NOTIFY_SUBSCRIBE_PARAMETERS), "Power callback ABI size");
+static_assert(offsetof(PowerNotificationParameters,Callback)==offsetof(DEVICE_NOTIFY_SUBSCRIBE_PARAMETERS,Callback), "Power callback ABI offset");
+static_assert(offsetof(PowerNotificationParameters,Context)==offsetof(DEVICE_NOTIFY_SUBSCRIBE_PARAMETERS,Context), "Power context ABI offset");
+static_assert(std::is_same<decltype(PowerNotificationParameters::Callback),PDEVICE_NOTIFY_CALLBACK_ROUTINE>::value, "Power callback signature");
+static_assert(power_notification_callback==DEVICE_NOTIFY_CALLBACK, "Power callback flag");
+#endif
 class QpcNanoseconds {
     u64 frequency_ = 0;
 public:
@@ -57,7 +73,7 @@ class WindowsPowerEpoch {
     u64 incarnation_[2] {};
     PowerEpochCounter epoch_;
     HPOWERNOTIFY registration_ = nullptr;
-    DEVICE_NOTIFY_SUBSCRIBE_PARAMETERS parameters_ {};
+    PowerNotificationParameters parameters_ {};
     static ULONG CALLBACK callback(PVOID context, ULONG type, PVOID) noexcept {
         auto& state = *static_cast<WindowsPowerEpoch*>(context);
         state.epoch_.notify(type);
@@ -67,7 +83,7 @@ class WindowsPowerEpoch {
         if (BCryptGenRandom(nullptr,reinterpret_cast<PUCHAR>(incarnation_),sizeof(incarnation_),
                             BCRYPT_USE_SYSTEM_PREFERRED_RNG) < 0 || !(incarnation_[0] || incarnation_[1])) return;
         parameters_ = {callback,this};
-        registration_ = RegisterSuspendResumeNotification(&parameters_,DEVICE_NOTIFY_CALLBACK);
+        registration_ = RegisterSuspendResumeNotification(&parameters_,power_notification_callback);
     }
 public:
     WindowsPowerEpoch(const WindowsPowerEpoch&) = delete;

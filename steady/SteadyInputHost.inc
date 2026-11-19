@@ -296,6 +296,12 @@ bool steady_receive(std::shared_ptr<input_t> &input, std::string_view payload, s
 
 #ifdef SUNSHINE_TESTS
 namespace testing {
+  /** @brief Read completed owner ingress processing safely. @return Count for the active owner, or zero. */
+  std::uint64_t steady_processed_count() {
+    std::lock_guard lock {keyboard_mutex};
+    return steady_owner ? steady_owner->owner->processed() : 0;
+  }
+
   /** @brief Read completed timed backend calls safely. @return Count for the active owner, or zero. */
   std::uint64_t steady_transition_count() {
     std::lock_guard lock {keyboard_mutex};
