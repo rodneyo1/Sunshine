@@ -769,7 +769,7 @@ TEST_F(VirtualHidDeviceTest, TranslatesMouseAndKeyboardInput) {
   EXPECT_EQ(mouse_event.high_resolution_scroll, -240);
 
   config::input.always_send_scancodes = true;
-  platf::virtualhid::keyboard_update(*context(), 0x41, false, 0);
+  EXPECT_TRUE(platf::virtualhid::keyboard_update(*context(), 0x41, false, 0));
   auto keyboard_event = context()->keyboard->last_submitted_event();
   EXPECT_EQ(keyboard_event.key_code, 0x41);
   EXPECT_TRUE(keyboard_event.pressed);
@@ -803,7 +803,7 @@ TEST_F(VirtualHidDeviceTest, TranslatesMouseAndKeyboardInput) {
   ASSERT_TRUE(context()->mouse->close().ok());
   ASSERT_TRUE(context()->keyboard->close().ok());
   platf::virtualhid::move_mouse(*context(), 1, 1);
-  platf::virtualhid::keyboard_update(*context(), 0x41, false, 0);
+  EXPECT_FALSE(platf::virtualhid::keyboard_update(*context(), 0x41, false, 0));
   context()->mouse.reset();
   context()->keyboard.reset();
   platf::virtualhid::move_mouse(*context(), 1, 1);
@@ -812,7 +812,7 @@ TEST_F(VirtualHidDeviceTest, TranslatesMouseAndKeyboardInput) {
   platf::virtualhid::button_mouse(*context(), BUTTON_LEFT, false);
   platf::virtualhid::scroll(*context(), 1);
   platf::virtualhid::hscroll(*context(), 1);
-  platf::virtualhid::keyboard_update(*context(), 0x41, false, 0);
+  EXPECT_FALSE(platf::virtualhid::keyboard_update(*context(), 0x41, false, 0));
   platf::virtualhid::unicode(*context(), text.data(), static_cast<int>(text.size()));
 }
 

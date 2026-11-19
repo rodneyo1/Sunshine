@@ -114,6 +114,7 @@ jobs:
           git submodule status --recursive | Set-Content baseline-package/submodule-pins.txt
           Copy-Item LICENSE baseline-package
           Copy-Item 'steady/Start Probe Host.cmd' baseline-package
+          Copy-Item 'steady/Start Steady Input.cmd','steady/Start-SteadyInput.ps1','steady/INPUT-PROTOTYPE.md' baseline-package
           Get-FileHash steady/SteadyProbe.h | ConvertTo-Json | Set-Content baseline-package/steady-probe-source.json
           foreach ($requiredFile in @('sunshine.exe', 'zlib1.dll', 'tools/sunshinesvc.exe', 'scripts/add-firewall-rule.bat', 'scripts/install-service.bat', 'assets/web/index.html')) {
             if (-not (Test-Path -LiteralPath "baseline-package/$requiredFile")) { throw "Incomplete package: $requiredFile" }

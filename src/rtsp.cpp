@@ -22,6 +22,7 @@ extern "C" {
 #include <boost/bind.hpp>
 
 // local includes
+#include "../steady/SteadyInput.h"
 #include "../steady/SteadyProbe.h"
 #include "config.h"
 #include "globals.h"
@@ -878,6 +879,9 @@ namespace rtsp_stream {
     // Tell the client about our supported features
     ss << "a=x-ss-general.featureFlags:" << (uint32_t) platf::get_capabilities() << std::endl;
 #ifdef _WIN32
+    if (steady_input_opt_in()) {
+      ss << "a=x-steady-input.keyboardVersion:" << STEADY_INPUT_VERSION << std::endl;
+    }
     if (steady_probe_opt_in()) {
       ss << "a=x-steady-input.probeVersion:" << STEADY_PROBE_VERSION << std::endl;
     }

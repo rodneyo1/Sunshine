@@ -19,6 +19,17 @@
 
 namespace input {
   struct input_t;
+#ifdef _WIN32
+  /**
+   * @brief Process an authenticated private prototype frame on the control thread.
+   * @param input Session input state.
+   * @param payload Decrypted frame, after control-v2 authentication.
+   * @param response Output response, empty when none is needed.
+   * @param failure Requests stream shutdown on an owner-thread fault.
+   * @return False when this committed session must terminate.
+   */
+  bool steady_receive(std::shared_ptr<input_t> &input, std::string_view payload, std::vector<std::uint8_t> &response, std::function<void()> failure);
+#endif
 
   /**
    * @brief Write a debug log representation of the input packet.
@@ -86,6 +97,10 @@ namespace input {
 
 #ifdef SUNSHINE_TESTS
   namespace testing {
+  #ifdef _WIN32
+    /** @brief Read completed timed backend submissions for a fake-backend integration test. @return Count or zero. */
+    std::uint64_t steady_transition_count();
+  #endif
     /**
      * @brief Replace the global platform input backend for a unit test.
      *

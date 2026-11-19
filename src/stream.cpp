@@ -24,6 +24,7 @@ extern "C" {
 }
 
 // local includes
+#include "../steady/SteadyInput.h"
 #include "../steady/SteadyProbe.h"
 #include "config.h"
 #include "display_device.h"
@@ -1178,6 +1179,45 @@ namespace stream {
    */
   void controlBroadcastThread(control_server_t *server) {
 #ifdef _WIN32
+    server->map(STEADY_INPUT_TYPE, [](session_t *session, const std::string_view &payload) {
+      if (!steady_input_opt_in() || session->config.controlProtocolType != 13 || !(session->config.encryptionFlagsEnabled & SS_ENC_CONTROL_V2) || !session->control.peer) {
+        return;
+      }
+      std::vector<std::uint8_t> reply;
+      if (!input::steady_receive(session->input, payload, reply, [session]() {
+            session::stop(*session);
+          })) {
+        session::stop(*session);
+        return;
+      }
+      if (reply.empty()) {
+        return;
+      }
+      if (session->control.seq == UINT32_MAX) {
+        session::stop(*session);
+        return;
+      }
+      std::vector<std::uint8_t> plaintext(sizeof(control_header_v2) + reply.size());
+      auto header = reinterpret_cast<control_header_v2 *>(plaintext.data());
+      header->type = util::endian::little(static_cast<std::uint16_t>(STEADY_INPUT_TYPE));
+      header->payloadLength = util::endian::little(static_cast<std::uint16_t>(reply.size()));
+      std::copy(reply.begin(), reply.end(), plaintext.begin() + sizeof(control_header_v2));
+      std::array<std::uint8_t, 128> encrypted;
+      auto response = encode_control(session, std::string_view {reinterpret_cast<const char *>(plaintext.data()), plaintext.size()}, encrypted);
+      if (response.empty()) {
+        session::stop(*session);
+        return;
+      }
+      auto packet = enet_packet_create(response.data(), response.size(), ENET_PACKET_FLAG_RELIABLE);
+      if (!packet) {
+        session::stop(*session);
+        return;
+      }
+      if (enet_peer_send(session->control.peer, CTRL_CHANNEL_KEYBOARD, packet)) {
+        enet_packet_destroy(packet);
+        session::stop(*session);
+      }
+    });
     // Diagnostic only: existing paired control-v2 authentication precedes this
     // handler. No input ownership or keyboard state is touched.
     server->map(STEADY_PROBE_TYPE, [](session_t *session, const std::string_view &payload) {

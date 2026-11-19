@@ -13,6 +13,7 @@ extern "C" {
 #include <bitset>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <functional>
 #include <list>
@@ -28,6 +29,13 @@ extern "C" {
 #include <boost/endian/buffers.hpp>
 
 // local includes
+#ifdef _WIN32
+  #ifndef WIN32_LEAN_AND_MEAN
+    #define WIN32_LEAN_AND_MEAN
+  #endif
+  #include "../steady/core/windows-owner.h"
+#endif
+#include "../steady/SteadyInput.h"
 #include "config.h"
 #include "globals.h"
 #include "input.h"
@@ -176,6 +184,15 @@ namespace input {
   static std::array<std::uint8_t, 5> mouse_press {};
 
   static platf::input_t platf_input;
+  static std::mutex keyboard_mutex;  ///< Serializes legacy input, timed input and backend replacement.
+  static std::mutex steady_lifecycle_mutex;  ///< Serializes timed session admission and teardown.
+  static bool steady_keyboard_active = false;  ///< A committed timed owner excludes legacy keyboard/text input.
+#ifdef _WIN32
+  struct timed_keyboard_t;
+  static std::shared_ptr<timed_keyboard_t> steady_owner;  ///< Exclusive timed keyboard owner.
+  void steady_stop(const std::shared_ptr<input_t> &input);
+  void steady_stop_all();
+#endif
 #ifdef SUNSHINE_TESTS
   /**
    * @brief Recorder that unit tests install in place of the platform keyboard.
@@ -315,6 +332,9 @@ namespace input {
 
     safe::mail_raw_t::event_t<input::touch_port_t> touch_port_event;  ///< Touch port event.
     platf::feedback_queue_t feedback_queue;  ///< Queue used to deliver controller feedback to the platform backend.
+
+    std::array<unsigned char, STEADY_INPUT_BYTES> steady_offer {};  ///< Immutable prototype startup offer.
+    bool steady_committed = false;  ///< Timed commitment never falls back within a session.
 
     std::list<std::vector<uint8_t>> input_queue;  ///< Validated input packets waiting for processing.
     std::mutex input_queue_lock;  ///< Input queue lock.
@@ -1105,6 +1125,10 @@ namespace input {
     }
   }
 
+#ifdef _WIN32
+  #include "../steady/SteadyInputHost.inc"
+#endif
+
   /**
    * @brief Deliver one keyboard event to the platform backend.
    *
@@ -1172,6 +1196,10 @@ namespace input {
    * @param synthetic_modifiers Byte mask of modifiers to press around the repeated key event.
    */
   void repeat_key(uint16_t key_code, uint8_t flags, std::byte synthetic_modifiers) {
+    std::lock_guard lock {keyboard_mutex};
+    if (steady_keyboard_active) {
+      return;
+    }
     // If key no longer pressed, stop repeating
     const auto state = key_press[make_kpid(key_code, flags)];
     if (!state.pressed) {
@@ -1191,6 +1219,10 @@ namespace input {
    * @param packet Protocol packet being processed.
    */
   void passthrough(std::shared_ptr<input_t> &input, PNV_KEYBOARD_PACKET packet) {
+    std::lock_guard lock {keyboard_mutex};
+    if (steady_keyboard_active) {
+      return;
+    }
     if (!config::input.keyboard) {
       return;
     }
@@ -1310,6 +1342,10 @@ namespace input {
    * @param packet Protocol packet being processed.
    */
   void passthrough(const NV_UNICODE_PACKET *packet) {
+    std::lock_guard lock {keyboard_mutex};
+    if (steady_keyboard_active) {
+      return;
+    }
     if (!config::input.keyboard) {
       return;
     }
@@ -2282,6 +2318,10 @@ namespace input {
    * @brief Release every pressed keyboard key tracked by Sunshine.
    */
   void reset_keyboard_keys() {
+    std::lock_guard lock {keyboard_mutex};
+    if (steady_keyboard_active) {
+      return;
+    }
     for (auto &[key, state] : key_press) {
       if (state.pressed) {
         // key_press is keyed on the client's unmapped virtual-key code, but the press was
@@ -2332,6 +2372,9 @@ namespace input {
    * @brief Reset the object to its initial empty state.
    */
   void reset(std::shared_ptr<input_t> &input) {
+#ifdef _WIN32
+    steady_stop(input);
+#endif
     task_pool.cancel(key_press_repeat_id);
     task_pool.cancel(input->mouse_left_button_timeout);
 
@@ -2382,6 +2425,9 @@ namespace input {
      * @brief Destroy the input subsystem deinitializer.
      */
     ~deinit_t() override {
+#ifdef _WIN32
+      steady_stop_all();
+#endif
       retained_input_map_t inputs;
       {
         auto &state = retained_input_state();
@@ -2414,11 +2460,22 @@ namespace input {
 
   void refresh_virtual_input() {
     dispatch_input_task([]() {
+      std::lock_guard lock {keyboard_mutex};
+      if (steady_keyboard_active) {
+        BOOST_LOG(warning) << "STEADY: defer keyboard backend replacement until the timed session ends";
+        return;
+      }
       if (platf_input) {
         task_pool.cancel(key_press_repeat_id);
         key_press_repeat_id = nullptr;
         reset_mouse_buttons();
-        reset_keyboard_keys();
+        // The keyboard is neutral before refresh admission; release tracked legacy keys here.
+        for (auto &[key, state] : key_press) {
+          if (state.pressed) {
+            emit_keyboard_update(map_keycode(vk_from_kpid(key) & 0x00FF), true, flags_from_kpid(key), state.extended);
+            state.pressed = false;
+          }
+        }
         auto &context = platf::virtualhid::get_input_context(platf_input);
         context.refresh_keyboard();
         context.refresh_mouse();

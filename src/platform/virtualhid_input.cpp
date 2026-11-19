@@ -938,10 +938,13 @@ namespace platf::virtualhid {
     }
   }
 
-  void keyboard_update(input_context_t &context, std::uint16_t modcode, bool release, std::uint8_t flags, bool extended) {
+  bool keyboard_update(input_context_t &context, std::uint16_t modcode, bool release, std::uint8_t flags, bool extended) {
     if (context.keyboard) {
-      log_failure("submit libvirtualhid keyboard input"sv, context.keyboard->submit(keyboard_event(modcode, release, flags, extended)));
+      const auto status = context.keyboard->submit(keyboard_event(modcode, release, flags, extended));
+      log_failure("submit libvirtualhid keyboard input"sv, status);
+      return status.ok();
     }
+    return false;
   }
 
   void unicode(input_context_t &context, const char *utf8, int size) {

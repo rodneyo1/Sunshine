@@ -29,6 +29,11 @@ extern "C" {
 #include "src/input.h"
 #include "src/platform/virtualhid_input.h"
 #include "src/utility.h"
+#ifdef _WIN32
+  #include "steady/SteadyInput.h"
+
+  #include <windows.h>
+#endif
 
 namespace {
   /**
@@ -642,3 +647,122 @@ TEST_F(InputGamepadSessionTest, RetargetsRelativeMouseFromLatestStreamGeometry) 
   EXPECT_EQ(mouse_event.y, 9);
   EXPECT_EQ(context().mouse_viewport.offset_x, 0);
 }
+
+#ifdef _WIN32
+namespace {
+  /** @brief Restore opt-in environment and stop the owner even when an assertion aborts a test. */
+  struct steady_test_scope_t {
+    std::shared_ptr<input::input_t> session;  ///< Fake-backend test session.
+    std::string old_enable, old_trace, path;  ///< Saved process environment and unique trace path.
+
+    /** @brief Set up exact opt-in and a unique temporary trace. @param input Test session. */
+    explicit steady_test_scope_t(std::shared_ptr<input::input_t> input):
+        session(std::move(input)) {
+      char text[32768];
+      auto n = GetEnvironmentVariableA("STEADY_INPUT_ENABLE", text, sizeof(text));
+      if (n && n < sizeof(text)) {
+        old_enable.assign(text, n);
+      }
+      n = GetEnvironmentVariableA("STEADY_INPUT_TRACE", text, sizeof(text));
+      if (n && n < sizeof(text)) {
+        old_trace.assign(text, n);
+      }
+      GetTempPathA(sizeof(text), text);
+      path = std::string(text) + "steady-input-test-" + std::to_string(GetCurrentProcessId()) + "-" + std::to_string(GetTickCount64()) + ".csv";
+      SetEnvironmentVariableA("STEADY_INPUT_ENABLE", "1");
+      SetEnvironmentVariableA("STEADY_INPUT_TRACE", path.c_str());
+    }
+
+    /** @brief Join before the fixture replaces its fake native backend. */
+    ~steady_test_scope_t() {
+      input::reset(session);
+      SetEnvironmentVariableA("STEADY_INPUT_ENABLE", old_enable.empty() ? nullptr : old_enable.c_str());
+      SetEnvironmentVariableA("STEADY_INPUT_TRACE", old_trace.empty() ? nullptr : old_trace.c_str());
+      DeleteFileA(path.c_str());
+    }
+  };
+
+  /** @brief Dispatch an already-authenticated test frame. @param input Fake session. @param p Frame. @param reply Response. @param fail Failure callback. @return Session validity. */
+  bool steady_test_receive(std::shared_ptr<input::input_t> &input, const unsigned char *p, std::vector<std::uint8_t> &reply, std::function<void()> fail = []() {
+  }) {
+    return input::steady_receive(input, std::string_view(reinterpret_cast<const char *>(p), STEADY_INPUT_BYTES), reply, std::move(fail));
+  }
+}  // namespace
+
+TEST_F(InputGamepadSessionTest, SteadyCommitDispatchesOnceAndDisconnectReleasesTheHeldKey) {
+  auto stream_input = input::alloc(std::make_shared<safe::mail_raw_t>(), "steady-native-success");
+  steady_test_scope_t scope(stream_input);
+  std::array<unsigned char, 64> hello;
+  steady_input_frame(hello.data(), SI_HELLO, 71);
+  steady_probe_put64(hello.data() + 24, 1000000000);
+  std::vector<std::uint8_t> reply;
+  ASSERT_TRUE(steady_test_receive(stream_input, hello.data(), reply));
+  ASSERT_EQ(reply.size(), 64);
+  ASSERT_EQ(reply[5], SI_OFFER);
+  auto frame = reply;
+  frame[5] = SI_COMMIT;
+  ASSERT_TRUE(steady_test_receive(stream_input, frame.data(), reply));
+  ASSERT_EQ(reply[5], SI_READY);
+  frame[5] = SI_KEY;
+  steady_probe_put64(frame.data() + 16, 1);
+  frame[57] = 4;
+  frame[58] = 1;
+  ASSERT_TRUE(steady_test_receive(stream_input, frame.data(), reply));
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+  while (input::testing::steady_transition_count() < 1 && std::chrono::steady_clock::now() < deadline) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  ASSERT_EQ(input::testing::steady_transition_count(), 1);
+  // A repeated authenticated identity is deduplicated, never injected twice.
+  ASSERT_TRUE(steady_test_receive(stream_input, frame.data(), reply));
+  input::reset(stream_input);
+  const auto event = context().keyboard->last_submitted_event();
+  EXPECT_EQ(event.key_code, 0x41);
+  EXPECT_FALSE(event.pressed);
+  EXPECT_EQ(context().keyboard->submit_count(), 2);
+}
+
+TEST_F(InputGamepadSessionTest, SteadyBackendFailureTerminatesInsteadOfReplayingLegacy) {
+  auto stream_input = input::alloc(std::make_shared<safe::mail_raw_t>(), "steady-native-failure");
+  steady_test_scope_t scope(stream_input);
+  std::array<unsigned char, 64> hello;
+  steady_input_frame(hello.data(), SI_HELLO, 72);
+  steady_probe_put64(hello.data() + 24, 1000000000);
+  std::vector<std::uint8_t> reply;
+  ASSERT_TRUE(steady_test_receive(stream_input, hello.data(), reply));
+  ASSERT_EQ(reply.size(), 64);
+  auto frame = reply;
+  frame[5] = SI_COMMIT;
+  auto failed = std::make_shared<std::promise<void>>();
+  auto observed = failed->get_future();
+  ASSERT_TRUE(steady_test_receive(stream_input, frame.data(), reply, [failed]() {
+    failed->set_value();
+  }));
+  ASSERT_TRUE(context().keyboard->close().ok());
+  frame[5] = SI_KEY;
+  steady_probe_put64(frame.data() + 16, 1);
+  frame[57] = 4;
+  frame[58] = 1;
+  ASSERT_TRUE(steady_test_receive(stream_input, frame.data(), reply));
+  EXPECT_EQ(observed.wait_for(std::chrono::seconds(5)), std::future_status::ready);
+  input::reset(stream_input);
+  EXPECT_EQ(context().keyboard->submit_count(), 0);
+}
+
+TEST_F(InputGamepadSessionTest, SteadyRejectsChangedOfferAndPreservesLegacyBeforeCommit) {
+  auto stream_input = input::alloc(std::make_shared<safe::mail_raw_t>(), "steady-native-offer");
+  steady_test_scope_t scope(stream_input);
+  std::array<unsigned char, 64> hello;
+  steady_input_frame(hello.data(), SI_HELLO, 73);
+  steady_probe_put64(hello.data() + 24, 1000000000);
+  std::vector<std::uint8_t> reply;
+  ASSERT_TRUE(steady_test_receive(stream_input, hello.data(), reply));
+  ASSERT_EQ(reply.size(), 64);
+  auto frame = reply;
+  frame[5] = SI_COMMIT;
+  frame[32] ^= 1;
+  ASSERT_TRUE(steady_test_receive(stream_input, frame.data(), reply));
+  ASSERT_EQ(reply[5], SI_REJECT);
+  EXPECT_EQ(input::testing::steady_transition_count(), 0);
+}
+#endif

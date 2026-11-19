@@ -309,8 +309,9 @@ namespace platf::virtualhid {
    * @param release Whether the key was released.
    * @param flags Bit flags that modify the requested operation.
    * @param extended Whether the client positively identified an extended key.
+   * @return True only when an available backend reports successful submission.
    */
-  void keyboard_update(input_context_t &context, std::uint16_t modcode, bool release, std::uint8_t flags, bool extended = false);
+  bool keyboard_update(input_context_t &context, std::uint16_t modcode, bool release, std::uint8_t flags, bool extended = false);
 
   /**
    * @brief Submit UTF-8 text input.
